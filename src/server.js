@@ -1,0 +1,8 @@
+import http from 'node:http';import fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';
+import {validateUpload,makeCopy,duplicateKey,costAllowed} from './domain.js';
+const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..','public');
+const projects=new Map(), users=new Map();
+const json=(res,status,data)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(data));};
+const auth=(req,res)=>{const email=req.headers['x-auth-email']; if(!email||email!==process.env.ALLOWED_EMAIL) {json(res,403,{error:'Access denied'});return false} return true};
+const server=http.createServer(async(req,res)=>{if(req.method==='GET'&&!req.url.startsWith('/api')&&req.url!='/health'){const file=req.url==='/'?'/index.html':req.url;const safe=path.join(root,path.normalize(file));if(safe.startsWith(root)&&fs.existsSync(safe)){res.writeHead(200);return res.end(fs.readFileSync(safe));}}if(req.url==='/health')return json(res,200,{ok:true}); if(!auth(req,res))return; if(req.method==='GET'&&req.url==='/api/projects')return json(res,200,[...projects.values()]); if(req.method==='POST'&&req.url==='/api/projects'){let body='';for await(const c of req)body+=c;let p=JSON.parse(body);let errors=validateUpload(p);if(errors.length)return json(res,422,{errors});let key=duplicateKey(p), duplicate=[...projects.values()].find(x=>x.sourceKey===key);let id=crypto.randomUUID();let project={id,state:'queued',sourceKey:key,filename:p.filename,renderStatus:'none',attempts:0,segments:[],duplicateOf:duplicate?.id??null};projects.set(id,project);return json(res,201,project)} return json(res,404,{error:'Not found'});});
+server.listen(process.env.PORT||3000);

@@ -1,0 +1,6 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {validateUpload,transition,editTranscript,canApprove,retry,costAllowed,makeCopy} from '../src/domain.js';
+test('validates media limits and aspect ratio',()=>{assert.equal(validateUpload({sizeBytes:1e9,durationSeconds:10,width:1080,height:1920}).length,0);assert.ok(validateUpload({sizeBytes:1e9+1,durationSeconds:9,width:1920,height:1080}).length>=3)});
+test('state transitions and render invalidation',()=>{let p={state:'queued',renderStatus:'current',outputKey:'x'};p=transition(p,'processing');p=transition(p,'ready for review');assert.ok(canApprove(p));p=editTranscript(p,[{text:'edited'}]);assert.equal(p.renderStatus,'outdated');assert.ok(!canApprove(p))});
+test('retries max twice after initial attempt',()=>{let p={attempts:0,state:'processing'};p=retry(p);p=retry(p);p=retry(p);assert.equal(p.state,'failed')});
+test('cost ceiling',()=>{assert.ok(costAllowed(9,1));assert.ok(!costAllowed(9.01,1))});
+test('copy removes fillers, creates four hashtags and flags guarantees',()=>{let c=makeCopy([{text:'Um use math practice to score guaranteed results.'}]);assert.ok(!/\bum\b/i.test(c.description));assert.equal(c.hashtags.length,4);assert.equal(c.flagged,true)});
