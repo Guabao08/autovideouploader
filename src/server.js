@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { validateUpload, transition, editTranscript, canApprove, retry, costStatus, duplicateKey, notificationFor } from './domain.js';
+import { validateUpload, transition, editTranscript, canApprove, retry, costStatus, duplicateKey, notificationFor, estimateStorageCost } from './domain.js';
 import { verifyGoogleIdToken } from './auth.js';
 import { JsonStore } from './store.js';
 import { UploadManager } from './uploads.js';
@@ -90,12 +90,17 @@ const server = http.createServer(async (req, res) => {
         try { completed = await uploads.complete(id); } catch (e) { return json(res, 409, { error: e.message }); }
         const errors = validateUpload({ sizeBytes: completed.sizeBytes, durationSeconds: meta.durationSeconds, width: meta.width, height: meta.height, mime: meta.mime });
         if (errors.length) { uploads.discard(id); return json(res, 422, { errors }); }
+        const storageCost = estimateStorageCost(completed.sizeBytes);
+        const cost = costStatus(store.data.spend, storageCost);
+        if (!cost.allowed) { uploads.discard(id); return json(res, 402, { error: 'Cost ceiling reached; new uploads are blocked until spend is reviewed', cost }); }
         const mediaPath = path.join(mediaDir, id);
         fs.renameSync(completed.filePath, mediaPath);
-        delete store.data.uploadSessions[id]; store.save();
+        delete store.data.uploadSessions[id];
+        store.data.spend = cost.projected;
+        store.save();
         const sourceKey = duplicateKey({ sha256: completed.sha256, sizeBytes: completed.sizeBytes });
         const duplicate = Object.values(store.data.projects).find(p => p.sourceKey === sourceKey);
-        const project = { id: crypto.randomUUID(), state: 'queued', sourceKey, sha256: completed.sha256, sizeBytes: completed.sizeBytes, filename: meta.filename || 'upload', sourcePath: mediaPath, outputPath: null, renderStatus: 'none', outputKey: null, attempts: 0, segments: [], duplicateOf: duplicate?.id ?? null };
+        const project = { id: crypto.randomUUID(), state: 'queued', sourceKey, sha256: completed.sha256, sizeBytes: completed.sizeBytes, storageCost, filename: meta.filename || 'upload', sourcePath: mediaPath, outputPath: null, renderStatus: 'none', outputKey: null, attempts: 0, segments: [], duplicateOf: duplicate?.id ?? null };
         saveProject(project);
         notify(project);
         return json(res, 201, project);
@@ -108,7 +113,9 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'DELETE' && !action) {
         const project = loadProject(id, res); if (!project) return;
         deleteProjectFiles(project);
-        delete store.data.projects[id]; store.save();
+        delete store.data.projects[id];
+        if (project.storageCost) store.data.spend = Math.max(0, store.data.spend - project.storageCost);
+        store.save();
         return json(res, 200, { deleted: true });
       }
       if (action === 'transcribe' && req.method === 'POST') {
@@ -155,7 +162,8 @@ const server = http.createServer(async (req, res) => {
         const project = loadProject(id, res); if (!project) return;
         const filePath = project.outputPath || project.sourcePath;
         if (!filePath || !fs.existsSync(filePath)) return json(res, 404, { error: 'No file available yet' });
-        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${project.filename}"` });
+        const safeName = project.filename.replace(/[\\"\r\n\x00-\x1f]/g, '_');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${safeName}"; filename*=UTF-8''${encodeURIComponent(project.filename)}` });
         return fs.createReadStream(filePath).pipe(res);
       }
     }

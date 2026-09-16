@@ -1,6 +1,7 @@
 const status = document.querySelector('#status');
 const projectsEl = document.querySelector('#projects');
 const signinEl = document.querySelector('#signin');
+const costEl = document.querySelector('#cost');
 let idToken = sessionStorage.getItem('idToken') || null;
 
 function authHeaders() { return idToken ? { authorization: `Bearer ${idToken}` } : {}; }
@@ -21,6 +22,14 @@ async function initSignIn() {
   if (!idToken) signinEl.style.display = 'block';
 }
 
+async function loadCost() {
+  const r = await fetch('/api/cost', { headers: authHeaders() });
+  if (!r.ok) return;
+  const c = await r.json();
+  costEl.textContent = `Spend: $${c.projected.toFixed(2)} / $${c.ceiling} ceiling${c.warning ? ` · ${c.warning.toUpperCase()}` : ''}`;
+  costEl.className = c.warning || '';
+}
+
 async function load() {
   const r = await fetch('/api/projects', { headers: authHeaders() });
   if (r.status === 401 || r.status === 403) { idToken = null; sessionStorage.removeItem('idToken'); signinEl.style.display = 'block'; return; }
@@ -32,6 +41,7 @@ async function load() {
     <a href="/api/projects/${p.id}/download" target="_blank">Download</a>
     <button class="delete">Delete</button>
   </article>`).join('') || '<p>No projects yet.</p>';
+  loadCost();
 }
 
 projectsEl.addEventListener('click', async e => {
