@@ -1,0 +1,4 @@
+*{box-sizing:border-box}body{font:16px system-ui;margin:0;background:#f6f7f9;color:#17202a}main{max-width:720px;margin:auto;padding:20px}header{margin:12px 0 28px}h1{font-size:2rem;margin:0}.card,.project{background:white;border:1px solid #d9dee5;border-radius:12px;padding:20px;margin:14px 0}label{display:block;margin:16px 0}input{display:block;margin-top:8px;width:100%}button{background:#155eef;color:#fff;border:0;border-radius:8px;padding:14px 18px;font-weight:700;min-height:48px;width:100%}.project{display:flex;justify-content:space-between;gap:12px}.project small{color:#667085}
+#cost{padding:8px 12px;border-radius:8px;background:#eef2f6;color:#344054;font-weight:600}
+#cost.warning{background:#fff4e5;color:#93650c}
+#cost.critical{background:#fde8e8;color:#a4262c}

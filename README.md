@@ -1,0 +1,22 @@
+# OnePrep Video Publisher — Phase 1
+
+A mobile-first vertical-video workflow. This repository contains the testable domain core and a deliberately narrow HTTP seam; provider adapters are credential-gated and must be added before production deployment.
+
+## Architecture decision record
+- **Web/API:** Node 20 HTTP service (replaceable adapter boundary), semantic static UI; single-user authorization via a real, signature-verified Google ID token (Google Identity Services on the client, RS256 JWT verification against Google's published JWKS on the server — see `src/auth.js`), scoped to the single `ALLOWED_EMAIL`.
+- **Uploads:** genuinely resumable — the client uploads a file in chunks (`POST /api/uploads`, `PUT /api/uploads/:id?offset=`, `GET /api/uploads/:id` to discover how many bytes the server already has, `POST /api/uploads/:id/complete`). The server streams the assembled bytes through `crypto.createHash('sha256')` to compute a real content hash used for duplicate detection (`src/uploads.js`). Production target remains a private S3-compatible object store with signed URLs and multipart uploads instead of local disk.
+- **Persistence:** projects, upload sessions, notifications and running spend are persisted to a JSON file (`data/store.json`, atomic write) rather than kept only in memory, and projects support real deletion (`DELETE /api/projects/:id`, which also removes the stored media). Production target remains Postgres.
+- **Media:** transcription, captioned rendering and Slack delivery are wired as real HTTP routes (`/api/projects/:id/transcribe|transcript|render|approve`) that run the actual domain state machine (`transition`, `editTranscript`, `canApprove`) and persist the result; the external provider calls themselves are credential-gated stubs that return `501` with `manual:true` until `TRANSCRIPTION_API_KEY`, `RENDER_ENABLED`, or `SLACK_BOT_TOKEN`/`SLACK_CHANNEL_ID` are configured and their adapters implemented, so the gap is honest rather than a fake success. `GET /api/projects/:id/download` is always available as the manual fallback.
+- Retries (`POST /api/projects/:id/retry`) and in-app notifications (`GET /api/notifications`, populated by `notificationFor` on failures, duplicates and ready-for-review renders) are wired end-to-end today; email delivery of notifications is the credential-gated part (`EMAIL_API_KEY`, `NOTIFICATION_EMAIL`).
+
+## Local
+`ALLOWED_EMAIL=you@example.com GOOGLE_CLIENT_ID=... npm start`; sign in with the Google account matching `ALLOWED_EMAIL` via the on-page Google Sign-In button (no client-settable auth header). `npm test` runs domain, auth-token-verification and upload/store persistence tests, all against deterministic local fixtures (a locally generated RSA keypair standing in for Google's signing key, a temp-dir store) — no network access required.
+
+## Setup/deployment
+Create Google OAuth web credentials (the ID token audience must match `GOOGLE_CLIENT_ID`), Slack app/bot and invite it to the fixed channel; provision private object storage, Postgres, FFmpeg worker, transcription, email, and deployment secrets: `ALLOWED_EMAIL`, `GOOGLE_CLIENT_ID`, `DATABASE_URL`, `STORAGE_*`, `TRANSCRIPTION_API_KEY`, `RENDER_ENABLED`, `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, `EMAIL_API_KEY`, `NOTIFICATION_EMAIL`. Configure HTTPS, CSRF, signed upload/download URLs, antivirus/media probing, and deletion jobs. Confirm provider retention/training/DPA terms; minimize retention and do not send secrets client-side.
+
+## Cost and safety
+Budget assumptions (verify current vendor pricing): storage/egress, transcription minutes, FFmpeg compute, email and Slack are usage-priced; target is ~$5/month for 10+ weekly videos. `costStatus` (`src/domain.js`) surfaces a `warning` at $4 spend, `critical` at $8, and a hard $10 processing ceiling that blocks new approvals (`GET /api/cost`, enforced in `POST /api/projects/:id/approve`) while retaining downloads/review. Never expose private URLs, and audit auth, deletion, render/send version, retries and approvals.
+
+## Scope / Phase 2
+Phase 1 has no social publishing. Add independent Instagram and TikTok adapters with official OAuth, idempotency keys, per-platform retries and success records. Instagram Creator later requires connection to a controlled Facebook Page; TikTok eligibility and scopes must be verified through official OAuth/API approval. Later defaults (public visibility, TikTok comments on/Duet/Stitch off, Instagram share-to-feed on) are documented product defaults, not fake Phase 1 controls.
